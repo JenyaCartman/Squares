@@ -43,11 +43,17 @@ set(GAME_HEADER)
 list(APPEND GAME_SOURCE
         Classes/AppDelegate.cpp
         Classes/MainScene.cpp
+        Classes/OutputMemoryStream.cpp
+        Classes/InputMemoryStream.cpp
         )
 list(APPEND GAME_HEADER
         Classes/AppDelegate.h
         Classes/MainScene.h
         Classes/PlayerInfo.h
+        Classes/MessageInfo.h
+        Classes/OutputMemoryStream.h
+        Classes/InputMemoryStream.h
+		Classes/Common/SharedConfig.h
         )
 
 if(SERVER)

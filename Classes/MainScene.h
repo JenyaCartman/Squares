@@ -1,6 +1,7 @@
 #pragma once
 #include "cocos2d.h"
 #include "PlayerInfo.h"
+#include "Common/SharedConfig.h"
 
 #include <array>
 #include <vector>
@@ -19,21 +20,27 @@ public:
     bool init() override;
     void update(float delta) override;
 
-    void AddPlayer(const PlayerInfo& player);
-
     CREATE_FUNC(MainScene);
 
 private:
-    void ParseMessage(const std::string& message);
     void DrawWorld();
 
+#ifndef SERVER
+    Snapshot GetNewWorldState();
+#endif //SERVER
+
 private:
-    std::vector<PlayerInfo> m_worldState;
+    Snapshot m_worldState;
+    Snapshot m_newWorldState;
+    cocos2d::Vec2 m_movement;
 
 #ifdef SERVER
     ENetServer m_server;
 #else 
     ENetClient m_client;
+
+    int m_currentTick;
+    int m_tickRate;
 #endif //SERVER
 };
 

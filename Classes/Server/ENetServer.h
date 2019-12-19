@@ -1,17 +1,12 @@
 #pragma once
-#include <enet/enet.h>
 #include <vector>
+#include <ctime>
 
 #include "PlayerInfo.h"
-
-enum class EMessageType
-{
-    Connect = 0,
-    Left,
-    Right,
-    Up,
-    Down
-};
+#include "MessageInfo.h"
+#include "OutputMemoryStream.h"
+#include "InputMemoryStream.h"
+#include "Common/SharedConfig.h"
 
 class ENetServer
 {
@@ -23,14 +18,24 @@ public:
     const std::vector<PlayerInfo>& GetWorldState() const;
 
 private:
-    void SendUpdates();
-    void ProcessMessage(EMessageType type, enet_uint32 id);
+    void Send(void* message, ENetPeer* peer);
 
-    PlayerInfo& FindClient(enet_uint32 id);
+    void SendUpdates();
+    void SerializeWorldState(OutputMemoryStream& stream) const;
+
+    void ReadMessage(enet_uint8* message, size_t length, size_t id);
+    void ProcessMessage(const ClientRequest& request, OutputMemoryStream& stream);
+
+    void UpdateWorldState();
 
 private:
     ENetAddress m_address;
     ENetHost* m_server;
 
-    std::vector<PlayerInfo> m_worldState;
+    int m_currentTick;
+    int m_tickRate;
+
+    size_t clientsCounter;
+    Snapshot m_worldState;
+    std::vector<ClientRequest> m_requests;
 };

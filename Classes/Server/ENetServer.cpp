@@ -1,9 +1,8 @@
 #include "ENetServer.h"
-#include "cocos2d.h"
 #include <iostream>
 
 
-ENetServer::ENetServer()
+ENetServer::ENetServer() : clientsCounter(0), m_currentTick(0), m_tickRate(3)
 {
     if (enet_initialize() != 0)
     {
@@ -30,111 +29,132 @@ ENetServer::~ENetServer()
 }
 
 
+void ENetServer::Send(void* message, ENetPeer* peer)
+{
+    ENetPacket *packet = enet_packet_create(message, strlen(static_cast<char*>(message)) + 1, ENET_PACKET_FLAG_RELIABLE);
+    enet_peer_send(peer, 0, packet);
+}
+
+
 void ENetServer::Listen()
 {
     ENetEvent event;
-    while (enet_host_service(m_server, &event, 1000) > 0)
+    OutputMemoryStream responseStream;
+    while (enet_host_service(m_server, &event, 5) > 0)
     {
         switch (event.type)
         {
         case ENET_EVENT_TYPE_CONNECT:
-           // OutputDebugStringA("A new client connected with ID " +  event.peer->connectID);
-            m_worldState.push_back(PlayerInfo(event.peer->connectID));
-            SendUpdates();
+            //OutputDebugStringA("A new client connected with ID " +  event.peer->connectID);
+                        event.peer->data = reinterpret_cast<void*>(++clientsCounter);
+                        m_worldState.push_back(PlayerInfo(clientsCounter));
+
             break;
 
         case ENET_EVENT_TYPE_RECEIVE:
-            //std::cout << "A packet containing " << event.packet->dataLength%s was received from %s on channel %u.\n",
-            //    
-            //    event.packet->data,
-            //    event.peer->data,
-            //    event.channelID);
+        {
+            void* temporaryBuffer = std::malloc(event.packet->dataLength);
+            memcpy(temporaryBuffer, event.packet->data, event.packet->dataLength);
+            InputMemoryStream stream(static_cast<enet_uint8*>(temporaryBuffer), event.packet->dataLength);
 
-            /* Clean up the packet now that we're done using it. */
-
-            if (strcmp((char*)event.packet->data, "left") == 0)
-                ProcessMessage(EMessageType::Left, event.peer->connectID);
-            else if (strcmp((char*)event.packet->data, "right") == 0)
-                ProcessMessage(EMessageType::Right, event.peer->connectID);
-            else if (strcmp((char*)event.packet->data, "up") == 0)
-                ProcessMessage(EMessageType::Up, event.peer->connectID);
-            else if (strcmp((char*)event.packet->data, "down") == 0)
-                ProcessMessage(EMessageType::Down, event.peer->connectID);
-
+            ReadMessage(event.packet->data, event.packet->dataLength, reinterpret_cast<size_t>(event.peer->data));
+            // Send(responseStream.GetBufferPtr(),event.peer);
             enet_packet_destroy(event.packet);
-
+            UpdateWorldState();
+        }
             break;
 
         case ENET_EVENT_TYPE_DISCONNECT:
-            printf("%s disconnected.\n", event.peer->data);
+            OutputDebugStringA(event.peer->connectID + " disconnected.\n");
+
+            auto player = std::find_if(m_worldState.begin(), m_worldState.end(),
+                [&](PlayerInfo player) { return event.peer->data == reinterpret_cast<void*>(player.ID); });
+            if (player != m_worldState.end())
+            {
+                m_worldState.erase(player);
+            }
 
             /* Reset the peer's client information. */
             event.peer->data = NULL;
         }
+    }
+
+    m_currentTick++;
+    if (m_currentTick == m_tickRate)
+    {
+        SendUpdates();
+        m_currentTick = 0;
     }
 }
 
 
 void ENetServer::SendUpdates()
 {
-    std::string message;
-
-    for (const auto& client : m_worldState)
-    {
-        message.append(client.CreateMessage());
-        message.append(".");
-    }
-
-    ENetPacket * packet = enet_packet_create(message.c_str(), message.size() + 1, ENET_PACKET_FLAG_RELIABLE);
+    OutputMemoryStream stream;
+    SerializeWorldState(stream);
+    ENetPacket * packet = enet_packet_create(stream.GetBufferPtr(), stream.GetLength() + 1, ENET_PACKET_FLAG_RELIABLE);
     enet_host_broadcast(m_server, 0, packet);
 }
 
 
-void ENetServer::ProcessMessage(EMessageType type, enet_uint32 id)
+ void ENetServer::ProcessMessage(const ClientRequest& request, OutputMemoryStream& stream)
 {
-    auto& player = FindClient(id);
+     auto player = std::find_if(m_worldState.begin(), m_worldState.end(),
+         [&](PlayerInfo player) { return request.ID == player.ID; });
 
-    switch (type)
-    {
-    case EMessageType::Left:
-        player.points[0].x -= 5;
-        player.points[1].x -= 5;
-        player.points[2].x -= 5;
-        player.points[3].x -= 5;
-        break;
-    case EMessageType::Right:
-        player.points[0].x += 5;
-        player.points[1].x += 5;
-        player.points[2].x += 5;
-        player.points[3].x += 5;
-        break;
-    case EMessageType::Up:
-        player.points[0].y += 5;
-        player.points[1].y += 5;
-        player.points[2].y += 5;
-        player.points[3].y += 5;
-        break;
-    case EMessageType::Down:
-        player.points[0].y -= 5;
-        player.points[1].y -= 5;
-        player.points[2].y -= 5;
-        player.points[3].y -= 5;
-        break;
-    }
-
-    SendUpdates();
+    stream.Write(request.index);
+    stream.Write(player->ID);
+    stream.Write(player->square);
 }
 
 
-PlayerInfo& ENetServer::FindClient(enet_uint32 id)
-{
-    for (auto& client : m_worldState)
+void ENetServer::SerializeWorldState(OutputMemoryStream& stream) const
+{        
+    stream.Write(m_worldState.size());
+
+    for (const auto& player : m_worldState)
     {
-        if (client.connectID == id)
+        stream.Write(player.ID);
+        stream.Write(player.square);
+    }
+}
+
+
+void ENetServer::ReadMessage(enet_uint8* message, size_t length, size_t id)
+{
+    void* temporaryBuffer = std::malloc(length);
+    memcpy(temporaryBuffer, message, length);
+    InputMemoryStream stream(static_cast<enet_uint8*>(temporaryBuffer), length);
+
+    size_t size;
+    stream.Read(size);
+
+    for (size_t i = 0; i < size; ++i)
+    {
+        ClientRequest request;
+        request.ID = id;
+        stream.Read(request.time);
+        stream.Read(request.direction);
+
+        m_requests.push_back(request);
+    }
+}
+
+
+void ENetServer::UpdateWorldState()
+{
+    for (const auto& request : m_requests)
+    {
+        auto player = std::find_if(m_worldState.begin(), m_worldState.end(),
+            [&](PlayerInfo player) { return request.ID == player.ID; });
+
+        if (player != m_worldState.end())
         {
-            return client;
+            player->square += request.direction * params::speed * request.time;
         }
     }
+
+    m_requests.clear();
 }
 
 

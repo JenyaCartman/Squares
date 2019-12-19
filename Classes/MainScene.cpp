@@ -1,4 +1,5 @@
 #include "MainScene.h"
+#include "Common/SharedConfig.h"
 
 USING_NS_CC;
 
@@ -6,6 +7,7 @@ Scene* MainScene::createScene()
 {
     return MainScene::create();
 }
+
 
 bool MainScene::init()
 {
@@ -19,30 +21,45 @@ bool MainScene::init()
 #ifndef SERVER
     while (!m_client.Connect());
 
-auto eventListener = EventListenerKeyboard::create();
+    auto eventListener = EventListenerKeyboard::create();
 
-eventListener->onKeyPressed = [&](EventKeyboard::KeyCode keyCode, Event* event)
-{
-    switch (keyCode)
+    eventListener->onKeyPressed = [&](EventKeyboard::KeyCode keyCode, Event* event)
     {
-    case EventKeyboard::KeyCode::KEY_LEFT_ARROW:
-    case EventKeyboard::KeyCode::KEY_A:
-        m_client.Send("left");
-        break;
-    case EventKeyboard::KeyCode::KEY_RIGHT_ARROW:
-    case EventKeyboard::KeyCode::KEY_D:
-        m_client.Send("right");
-        break;
-    case EventKeyboard::KeyCode::KEY_UP_ARROW:
-    case EventKeyboard::KeyCode::KEY_W:
-        m_client.Send("up");
-        break;
-    case EventKeyboard::KeyCode::KEY_DOWN_ARROW:
-    case EventKeyboard::KeyCode::KEY_S:
-        m_client.Send("down");
-        break;
-    }
-};
+        if (keyCode == EventKeyboard::KeyCode::KEY_LEFT_ARROW || keyCode == EventKeyboard::KeyCode::KEY_A)
+            m_movement.x = -1;
+
+        if(keyCode == EventKeyboard::KeyCode::KEY_RIGHT_ARROW || keyCode == EventKeyboard::KeyCode::KEY_D)
+            m_movement.x = 1;
+
+        if(keyCode == EventKeyboard::KeyCode::KEY_UP_ARROW || keyCode == EventKeyboard::KeyCode::KEY_W)
+            m_movement.y = 1;
+
+        if(keyCode == EventKeyboard::KeyCode::KEY_DOWN_ARROW || keyCode == EventKeyboard::KeyCode::KEY_S)
+            m_movement.y = -1;
+    };
+
+    eventListener->onKeyReleased = [&](EventKeyboard::KeyCode keyCode, Event* event)
+    {
+        switch (keyCode)
+        {
+        case EventKeyboard::KeyCode::KEY_LEFT_ARROW:
+        case EventKeyboard::KeyCode::KEY_A:
+        case EventKeyboard::KeyCode::KEY_RIGHT_ARROW:
+        case EventKeyboard::KeyCode::KEY_D:
+            m_movement.x = 0;
+            break;
+        case EventKeyboard::KeyCode::KEY_UP_ARROW:
+        case EventKeyboard::KeyCode::KEY_W:
+        case EventKeyboard::KeyCode::KEY_DOWN_ARROW:
+        case EventKeyboard::KeyCode::KEY_S:
+            m_movement.y = 0;
+            break;
+        }
+
+    };
+
+    m_currentTick = 0;
+    m_tickRate = 3;
 
 _eventDispatcher->addEventListenerWithSceneGraphPriority(eventListener, this);
 #endif
@@ -50,16 +67,59 @@ _eventDispatcher->addEventListenerWithSceneGraphPriority(eventListener, this);
     return true;
 }
 
+//#include <limits>
+ 
 void MainScene::update(float delta)
 {
+    //DrawNode* p;
+    //p->drawSolidRect()
+    //std::numeric_limits<float>::epsilon();
+
+    //float f1;
+    //float f2;
+
+    //if (std::abs(f1 - f2) <= std::numeric_limits<float>::epsilon()) {..}
+
 #ifdef SERVER
     m_server.Listen();
     m_worldState = m_server.GetWorldState();
 #else
-    if (m_client.CheckMessages())
+    if (m_movement.x != 0 || m_movement.y != 0)
     {
-        auto message = m_client.GetLastMessage();
-        ParseMessage(message);
+        ClientRequest request;
+        request.ID = m_client.GetID();
+        request.index = m_client.GetRequestsSize();
+        request.time = delta;
+        request.direction = m_movement;
+
+        m_client.AddRequest(request);
+
+        m_currentTick++;
+        if (m_currentTick == m_tickRate)
+        {
+            m_client.ProcessRequests();
+            m_currentTick = 0;
+        }
+        
+    }
+
+    if (m_client.ReceiveMessage())
+    {
+        m_newWorldState = GetNewWorldState();
+    }
+
+    for (auto& newPlayerState : m_newWorldState)
+    {
+        auto currentPlayerState = std::find_if(m_worldState.begin(), m_worldState.end(), 
+            [&](PlayerInfo player) { return newPlayerState.ID == player.ID; });
+
+        if (abs(static_cast<int>(currentPlayerState->square.x) - static_cast<int>(newPlayerState.square.x)) <= 2
+            && abs(static_cast<int>(currentPlayerState->square.y) - static_cast<int>(newPlayerState.square.y)) <= 2)
+        {
+            newPlayerState.direction = {0, 0};
+        }
+
+        currentPlayerState->square += newPlayerState.direction * params::speed * delta;
     }
 #endif //SERVER
 
@@ -67,53 +127,41 @@ void MainScene::update(float delta)
 }
 
 
-void MainScene::ParseMessage(const std::string& message)
+#ifndef SERVER
+Snapshot MainScene::GetNewWorldState()
 {
-    size_t end = 0;
-    m_worldState.clear();
+    auto newWorldState = m_client.GetWorldState();
 
-    while (end != message.size())
+    for (auto& newPlayerState : newWorldState)
     {
-        std::array<int, 8> result;
-        size_t begin = end;
-        end = message.find_first_of('.', begin) + 1;
-        auto playerMessage = message.substr(begin, end - begin - 1);
+        auto currentPlayerState = std::find_if(m_worldState.begin(), m_worldState.end(), 
+            [&](PlayerInfo player) { return newPlayerState.ID == player.ID; });
 
-        int pos = 0;
-        std::string tmp = "";
-
-        for (int i = 0; i < message.size() && pos < 8; ++i)
+        if (currentPlayerState == m_worldState.end())
         {
-            if (message[i] != ',')
-            {
-                tmp += message[i];
-            }
-            else
-            {
-                result[pos] = std::stoi(tmp);
-                pos++;
-                tmp = "";
-            }
+            m_worldState.push_back(newPlayerState);
         }
-
-        PlayerInfo tmpPlayer(0);
-        tmpPlayer.points[0] = Vec2(result[0], result[1]);
-        tmpPlayer.points[1] = Vec2(result[2], result[3]);
-        tmpPlayer.points[2] = Vec2(result[4], result[5]);
-        tmpPlayer.points[3] = Vec2(result[6], result[7]);
-
-        m_worldState.push_back(tmpPlayer);
+        else
+        {
+            newPlayerState.direction = newPlayerState.square - currentPlayerState->square;
+            newPlayerState.direction.normalize();
+        }
     }
+
+    return newWorldState;
 }
+#endif //SERVER
 
 
 void MainScene::DrawWorld()
 {
     removeAllChildren();
+
     for (const auto& player : m_worldState)
     {
-        auto square = DrawNode::create();
-        square->drawPolygon(player.points, 4, Color4F::WHITE, 1, Color4F::WHITE);
+        auto* square = Sprite::create("cat.png");
+        square->setScale(0.15);
+        square->setPosition(player.square);
         addChild(square);
     }
 }

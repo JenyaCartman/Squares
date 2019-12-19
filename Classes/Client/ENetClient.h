@@ -1,7 +1,11 @@
 #pragma once
 
-#include <enet/enet.h>
-#include <string>
+#include <vector>
+
+#include "PlayerInfo.h"
+#include "MessageInfo.h"
+#include "InputMemoryStream.h"
+#include "OutputMemoryStream.h"
 
 class ENetClient
 {
@@ -13,16 +17,24 @@ public:
     void Send(void* message);
     void Disconnect();
 
-    bool CheckMessages();
+    bool ReceiveMessage();
 
-    enet_uint32 GetConnectID() const;
-    std::string GetLastMessage() const;
+    size_t GetID() const;
+    const std::vector<PlayerInfo>& GetWorldState() const;
+    size_t GetRequestsSize() const;
+
+    void AddRequest(ClientRequest request);
+    void ProcessRequests();
+    void SerializeRequests(OutputMemoryStream& stream);
+
+private:
+    void ReadWorldState(InputMemoryStream& stream);
 
 private:
     ENetHost* m_client;
     ENetPeer* m_peer;
 
-    std::string m_message;
-
+    std::vector<PlayerInfo> m_worldState;
+    std::vector<ClientRequest> m_requests;
 };
 

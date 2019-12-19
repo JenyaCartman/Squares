@@ -59,10 +59,8 @@ bool ENetClient::Connect()
 
 void ENetClient::Send(void* message)
 {
-    ENetPacket *packet = enet_packet_create(message, strlen(static_cast<char*>(message)) + 1, ENET_PACKET_FLAG_RELIABLE);
-        
+    ENetPacket *packet = enet_packet_create(message, strlen(static_cast<char*>(message)) + 1, ENET_PACKET_FLAG_RELIABLE); 
     enet_peer_send(m_peer, 0, packet);
-    enet_host_flush(m_peer->host);
 }
 
 
@@ -90,14 +88,18 @@ void ENetClient::Disconnect()
 }
 
 
-bool ENetClient::CheckMessages()
+bool ENetClient::ReceiveMessage()
 {
     ENetEvent event;
-    while (enet_host_service(m_client, &event, 1000) > 0)
+    while (enet_host_service(m_client, &event, 5) > 0)
     {
         if (event.type == ENET_EVENT_TYPE_RECEIVE)
         {
-            m_message = std::string((char*)event.packet->data);
+            void* temporaryBuffer = std::malloc(event.packet->dataLength);
+            memcpy(temporaryBuffer, event.packet->data, event.packet->dataLength);
+            InputMemoryStream stream(static_cast<enet_uint8*>(temporaryBuffer), event.packet->dataLength);
+            ReadWorldState(stream);
+
             enet_packet_destroy(event.packet);
             return true;
         }
@@ -107,13 +109,70 @@ bool ENetClient::CheckMessages()
 }
 
 
-enet_uint32 ENetClient::GetConnectID() const
+void ENetClient::ReadWorldState(InputMemoryStream& stream)
 {
-    return m_peer->connectID;
+    size_t size;
+    stream.Read(size);
+    m_worldState.clear();
+
+    for (size_t i = 0; i < size; ++i)
+    {
+        PlayerInfo tmp(0);
+        stream.Read(tmp.ID);
+        stream.Read(tmp.square);
+        m_worldState.push_back(tmp);
+    }
 }
 
 
-std::string ENetClient::GetLastMessage() const
+void ENetClient::ProcessRequests()
 {
-    return m_message;
+    if (!m_requests.empty())
+    {
+        OutputMemoryStream stream;
+        SerializeRequests(stream);
+
+        void* message = stream.GetBufferPtr();
+        ENetPacket *packet = enet_packet_create(message, stream.GetLength() + 1, ENET_PACKET_FLAG_RELIABLE);
+        enet_peer_send(m_peer, 0, packet);
+
+        m_requests.clear();
+    }
+}
+
+
+void ENetClient::SerializeRequests(OutputMemoryStream& stream)
+{
+    size_t size = m_requests.size();
+    stream.Write(size);
+
+    for (size_t i = 0; i < size; ++i)
+    {
+        stream.Write(m_requests[i].time);
+        stream.Write(m_requests[i].direction);
+    }
+}
+
+
+void ENetClient::AddRequest(ClientRequest request)
+{
+    m_requests.push_back(request);
+}
+
+
+size_t ENetClient::GetID() const
+{
+    return reinterpret_cast<size_t>(m_peer->data);
+}
+
+
+const std::vector<PlayerInfo>& ENetClient::GetWorldState() const
+{
+    return m_worldState;
+}
+
+
+size_t ENetClient::GetRequestsSize() const
+{
+    return m_requests.size();
 }
