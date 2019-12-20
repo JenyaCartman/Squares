@@ -148,6 +148,25 @@ Snapshot MainScene::GetNewWorldState()
         }
     }
 
+    if (m_worldState.size() > newWorldState.size())
+    {
+        size_t index = 0;
+        while (index < m_worldState.size())
+        {
+            auto newPlayerState = std::find_if(newWorldState.begin(), newWorldState.end(),
+                [&](PlayerInfo player) { return m_worldState[index].ID == player.ID; });
+
+            if (newPlayerState == newWorldState.end())
+            {
+                m_worldState.erase(m_worldState.begin() + index);
+            }
+            else
+            {
+                index++;
+            }
+        }
+    }
+
     return newWorldState;
 }
 #endif //SERVER
